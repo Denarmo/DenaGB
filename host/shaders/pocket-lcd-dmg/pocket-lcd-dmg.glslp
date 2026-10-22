@@ -1,0 +1,9 @@
+# Game Boy: green-grey monochrome dot matrix with cell shadows.
+shaders = 1
+shader0 = ../_pocket-lcd/pocket-lcd.glsl
+filter_linear0 = false
+parameters = "tint;gap_light;shadow;gap"
+tint = 1.0
+gap_light = 1.0
+shadow = 0.6
+gap = 0.16

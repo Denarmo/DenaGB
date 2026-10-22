@@ -1,0 +1,9 @@
+# Game Boy Color and Game Boy Advance: bright colour dot matrix.
+shaders = 1
+shader0 = ../_pocket-lcd/pocket-lcd.glsl
+filter_linear0 = false
+parameters = "tint;gap_light;shadow;gap"
+tint = 0.0
+gap_light = 1.0
+shadow = 0.0
+gap = 0.14

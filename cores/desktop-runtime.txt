@@ -1,0 +1,6 @@
+# The freedesktop Flatpak runtime the Linux desktop build targets
+# (docs/dev/desktop-cores.md). cores/build-desktop.sh builds linux-x86_64 cores
+# inside sdk=; the SteamOS Flatpak must use the matching runtime=.
+# freedesktop-sdk release/26.08 (current stable branch, checked 2026-10-17).
+sdk=org.freedesktop.Sdk/x86_64/26.08
+runtime=org.freedesktop.Platform/x86_64/26.08
