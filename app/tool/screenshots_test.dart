@@ -1,29 +1,22 @@
-// Renders the current screens with real fonts (Nunito and Dena Icons from the
-// app, Roboto + Material Icons from the
-// Flutter SDK) for sharing progress. Not part of CI:
+// Renders the README screenshots with the app's own fonts and made-up game
+// names (no box art, no ROMs). Not part of CI:
 //   flutter test tool/screenshots_test.dart --update-goldens
+// then copy the shots from tool/screenshots/ to docs/screenshots/.
 import 'dart:io';
 
-import 'package:dena_emu/src/ui/app_theme.dart';
+import 'package:dena_emu/src/app.dart';
+import 'package:dena_emu/src/library/database.dart';
+import 'package:dena_emu/src/library/file_explorer.dart';
+import 'package:dena_emu/src/library/library_scope.dart';
+import 'package:dena_emu/src/shell/handheld.dart';
+import 'package:dena_emu/src/ui/dena_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:path/path.dart' as p;
 
 import '../test/session_screen_test.dart' show FakeGameApi, sessionApp;
 import '../test/support/library_fixture.dart';
-
-Future<void> loadFont(String family, List<String> files) async {
-  final fonts =
-      '${Platform.environment['FLUTTER_ROOT'] ?? 'C:/src/flutter'}'
-      '/bin/cache/artifacts/material_fonts';
-  final loader = FontLoader(family);
-  for (final f in files) {
-    loader.addFont(
-      Future.value(ByteData.sublistView(File('$fonts/$f').readAsBytesSync())),
-    );
-  }
-  await loader.load();
-}
 
 /// Loads a font bundled with the app (assets/fonts/...).
 Future<void> loadAppFont(String family, List<String> files) async {
@@ -38,16 +31,33 @@ Future<void> loadAppFont(String family, List<String> files) async {
   await loader.load();
 }
 
+/// Lets real file I/O finish, then rebuilds.
+Future<void> settle(WidgetTester tester) async {
+  for (var i = 0; i < 30; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+  }
+  await tester.pump(const Duration(seconds: 1));
+}
+
 void main() {
   setUpAll(() async {
     await loadAppFont('Roboto', [
       for (final w in ['Regular', 'Medium', 'SemiBold', 'Bold'])
         'roboto/Roboto-$w.ttf',
     ]);
-    await loadFont('MaterialIcons', ['MaterialIcons-Regular.otf']);
     await loadAppFont('Nunito', [
       for (final w in ['Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold'])
         'nunito/Nunito-$w.ttf',
+    ]);
+    await loadAppFont('PressStart2P', [
+      'press_start_2p/PressStart2P-Regular.ttf',
+    ]);
+    await loadAppFont('Silkscreen', [
+      'silkscreen/Silkscreen-Regular.ttf',
+      'silkscreen/Silkscreen-Bold.ttf',
     ]);
     await loadAppFont('DenaIcons', ['dena_icons/DenaIcons.otf']);
   });
@@ -72,204 +82,135 @@ void main() {
     );
     await tester.pumpAndSettle();
     await expectLater(
-      find.byType(MaterialApp),
+      find.byType(MaterialApp).first,
       matchesGoldenFile('screenshots/$name.png'),
     );
     debugDisableShadows = true; // the test binding checks it is restored
   }
 
+  // Made-up games, one system each in turn.
   const titles = [
     'Moonlight Quest',
-    'Pixel Racer DX',
-    'Tiny Tactics',
+    'Pixel Garden',
     'Star Courier',
+    'Twin Lantern',
+    'Moss Runner',
     'Bubble Garden',
+    'Tiny Tactics',
     'Cave Runner',
     'Neon Golf',
     'Robo Rally',
   ];
+  const systems = ['gb', 'gbc', 'gba', 'nds'];
 
-  testWidgets('library on a phone', (tester) async {
+  Future<LibraryDatabase> library() async {
     final db = await seededDb(titles);
-    await shoot(tester, shellApp(db), 'library_phone');
+    for (final (i, t) in titles.indexed) {
+      await db.customStatement(
+        "UPDATE games SET system = '${systems[i % systems.length]}' "
+        "WHERE title = '$t'",
+      );
+    }
+    return db;
+  }
+
+  Future<void> close(WidgetTester tester, LibraryDatabase db) async {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(Duration.zero);
     await tester.runAsync(db.close);
+  }
+
+  testWidgets('library', (tester) async {
+    final db = await library();
+    await shoot(tester, shellApp(db), 'library');
+    await close(tester, db);
   });
 
-  testWidgets('library on a 640x480 handheld', (tester) async {
-    final db = await seededDb(titles);
+  testWidgets('settings', (tester) async {
+    final db = await library();
     await shoot(
       tester,
       shellApp(db),
-      'library_640x480',
-      size: const Size(640, 480),
-      ratio: 1,
+      'settings',
+      before: () async {
+        await tester.tap(find.text('SETTINGS'));
+        await settle(tester);
+      },
     );
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(Duration.zero);
-    await tester.runAsync(db.close);
+    await close(tester, db);
   });
 
-  testWidgets('empty library', (tester) async {
-    final db = await seededDb([]);
-    await shoot(tester, shellApp(db), 'library_empty_phone');
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(Duration.zero);
-    await tester.runAsync(db.close);
+  testWidgets('LCD palette picker', (tester) async {
+    final db = await library();
+    await shoot(
+      tester,
+      shellApp(db),
+      'palette',
+      before: () async {
+        await tester.tap(find.text('SETTINGS'));
+        await settle(tester);
+        await tester.tap(find.text('LCD palette'));
+        await tester.pumpAndSettle();
+      },
+    );
+    await close(tester, db);
   });
 
-  Future<void> session(
-    WidgetTester tester,
-    String name, {
-    Size size = const Size(412, 915),
-    double ratio = 2.625,
-    String system = 'gba',
-    Future<void> Function()? then,
-  }) async {
+  testWidgets('file browser', (tester) async {
+    final tmp = Directory.systemTemp.createTempSync('shots');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final roms = p.join(tmp.path, 'Roms');
+    for (final f in [
+      'Moonlight Quest.gb',
+      'Pixel Garden.gbc',
+      'Star Courier.gba',
+      'Twin Lantern.nds',
+      'Moss Runner.gbc',
+      'Neon Golf.gba',
+    ]) {
+      File(p.join(roms, f))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('x');
+    }
+    Directory(p.join(roms, 'Homebrew')).createSync();
+    await shoot(
+      tester,
+      DenaApp(
+        home: Handheld(
+          enabled: false,
+          child: FileExplorerPage(
+            roots: [ExplorerRoot('Games card', tmp.path, DenaIcons.folder)],
+            folderMode: false,
+            extensions: importExtensions,
+          ),
+        ),
+      ),
+      'file-browser',
+      before: () async {
+        await settle(tester);
+        await tester.tap(find.text('Roms'));
+        await settle(tester);
+      },
+    );
+  });
+
+  testWidgets('pause menu', (tester) async {
     final db = await seededDb(['Moonlight Quest']);
-    await db.customStatement("UPDATE games SET system = '$system'");
+    await db.customStatement("UPDATE games SET system = 'gb'");
     final game = await db.select(db.games).getSingle();
-    await db.addCheat(
-      gameId: game.id,
-      name: 'Infinite lives',
-      code: '82003DF4 0063',
-      format: 'CodeBreaker',
-      createdAt: DateTime(2026),
-    );
-    await db.addCheat(
-      gameId: game.id,
-      name: 'Max money',
-      code: '12345678 9ABCDEF0',
-      format: 'GameShark / Action Replay',
-      createdAt: DateTime(2026),
-    );
     await shoot(
       tester,
       sessionApp(db, game, FakeGameApi()),
-      name,
-      size: size,
-      ratio: ratio,
+      'pause-menu',
       before: () async {
         await tester.tap(find.text('library'));
         await tester.pumpAndSettle();
-        await then?.call();
-      },
-    );
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(Duration.zero);
-    await tester.runAsync(db.close);
-  }
-
-  testWidgets('game with touch controls, phone', (tester) async {
-    await session(tester, 'game_touch_phone');
-  });
-
-  testWidgets('SNES game with touch controls, 640x480', (tester) async {
-    await session(
-      tester,
-      'game_touch_snes_640x480',
-      size: const Size(640, 480),
-      ratio: 1,
-      system: 'snes',
-    );
-  });
-
-  testWidgets('pause menu, phone', (tester) async {
-    await session(
-      tester,
-      'pause_menu_phone',
-      then: () async {
         await systemBack(tester);
         await tester.pumpAndSettle();
       },
     );
+    await close(tester, db);
   });
-
-  testWidgets('pause menu, 640x480', (tester) async {
-    await session(
-      tester,
-      'pause_menu_640x480',
-      size: const Size(640, 480),
-      ratio: 1,
-      then: () async {
-        await systemBack(tester);
-        await tester.pumpAndSettle();
-      },
-    );
-  });
-
-  testWidgets('cheats, phone', (tester) async {
-    await session(
-      tester,
-      'cheats_phone',
-      then: () async {
-        await systemBack(tester);
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Cheats'));
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 50)),
-        );
-        await tester.pumpAndSettle();
-      },
-    );
-  });
-
-  testWidgets('skins tab, phone', (tester) async {
-    final db = await seededDb(titles);
-    await shoot(
-      tester,
-      shellApp(db),
-      'skins_tab_phone',
-      before: () async {
-        await tester.tap(find.text('Skins'));
-        await tester.pumpAndSettle();
-      },
-    );
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(Duration.zero);
-    await tester.runAsync(db.close);
-  });
-
-  // Theming (theming.md): the settings page and the library in other themes.
-  testWidgets('theme settings, phone', (tester) async {
-    final db = await seededDb(titles);
-    await shoot(
-      tester,
-      shellApp(db),
-      'theme_settings_phone',
-      before: () async {
-        await tester.tap(find.text('Settings'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Theme'));
-        await tester.pumpAndSettle();
-      },
-    );
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(Duration.zero);
-    await tester.runAsync(db.close);
-  });
-
-  for (final (mode, palette) in [
-    (ThemeMode.light, denaPalette),
-    (ThemeMode.dark, 'gbc_teal'),
-    (ThemeMode.light, 'psp_red'),
-  ]) {
-    testWidgets('library in $palette ${mode.name}', (tester) async {
-      final db = await seededDb(titles);
-      await shoot(
-        tester,
-        shellApp(
-          db,
-          theme: ThemeSettings(mode: mode, palette: palette),
-        ),
-        'library_phone_${palette}_${mode.name}',
-      );
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(Duration.zero);
-      await tester.runAsync(db.close);
-    });
-  }
 }
 
 /// Presses the system back button (the session opens its pause menu).
